@@ -1,0 +1,211 @@
+const express = require('express');
+const app = express();
+const server = require('http').Server(app);
+const io = require('socket.io')(server);
+const ioC = require('socket.io-client');
+const crypto = require('crypto');
+
+function calculateHash(block) {
+  let data = JSON.stringify(block);
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+// Set the mining interval to 5 seconds
+let miningInterval = 5 * 1000;
+
+// Start mining new blocks at the specified interval
+setInterval(mineBlock, miningInterval);
+
+let globDifficulty = 1;
+
+// Data structure to store the blockchain
+let blockchain = [];
+
+// List of connected nodes
+let nodes = [];
+
+// Function to add a new block to the blockchain
+function addBlock(block) {
+  blockchain.push(block);
+  console.log("\nBlock added: " + block.difficulty + "\n" + block.timestamp + "\n" + block.hash + "\n" + block.previousHash);
+}
+
+function getLatestBlock() {
+  return blockchain[blockchain.length - 1];
+}
+
+function isValidHash(block, hash) {
+    let calculatedHash = calculateHash(block);
+    return calculatedHash === hash;
+  }
+
+function getLatestBlock() {
+    if (blockchain.length === 0) {
+      return { hash: '0' };
+    }
+    return blockchain[blockchain.length - 1];
+  }
+  
+
+// Function to validate a new block
+function isValidBlock(block) {
+  // Check that the data in the block is correct
+  if (block.difficulty !== globDifficulty) {
+    console.log('Invalid block: Invalid difficulty');
+    return false;
+  }    
+
+  let blockCompare = {
+    difficulty: block.difficulty,
+    timestamp: block.timestamp,
+    previousHash: block.previousHash
+  };
+
+  // Calculate the hash of the block
+  let calculatedHash = calculateHash(blockCompare);
+
+  // Check that the block hash is correct
+  if (calculatedHash !== block.hash) {
+    console.log('Invalid block: Invalid hash ' + block.hash + "\n" + calculatedHash);
+    return false;
+  }
+
+  // Check that the previous block hash is correct
+  let previousBlock = getLatestBlock();
+    if (!previousBlock) {
+    block.previousHash = '0';
+    } else {
+    block.previousHash = previousBlock.hash;
+    }
+  if (previousBlock.hash !== block.previousHash) {
+    console.log('Invalid block: Invalid previous hash');
+    return false;
+  }
+
+  // Check that the block hash meets the difficulty target
+  if (!isValidHash(blockCompare,calculatedHash)) {
+    console.log('Invalid block: Hash does not meet difficulty target');
+    return false;
+  }
+
+  return true;
+}
+
+// Function to broadcast a new block to all nodes
+function broadcastBlock(block) {
+  io.emit('new block', block);
+}
+
+// Function to calculate a new block
+function mineBlock() {
+    let previousHash = '';
+    let latestBlock = getLatestBlock();
+    if (latestBlock) {
+      previousHash = latestBlock.hash;
+    }
+  
+    // Create a new block with the given difficulty
+    let block = {
+      difficulty: globDifficulty,
+      timestamp: Date.now(),
+      previousHash: previousHash
+    };
+  
+    // Calculate the hash of the block
+    block.hash = calculateHash(block);
+  
+    // Add the block to the blockchain if it is valid
+    if (isValidBlock(block)) {
+      globDifficulty = globDifficulty+1;
+      addBlock(block);
+      broadcastBlock(block);
+    }
+  }
+
+// Function to connect to another node
+function connectToNode(host) {
+  // Connect to the node using Socket.io
+  let socket = ioC.connect(host);
+
+  // Add the node to the list of connected nodes
+  nodes.push(socket);
+
+  // Send the current blockchain to the new node
+  socket.emit('blockchain', blockchain);
+
+  // Event handler for receiving a new block from a node
+  socket.on('new block', block => {
+    console.log('Received block:', block);
+
+    // Validate the block and add it to the blockchain if it is valid
+    if (isValidBlock(block)) {
+      addBlock(block);
+      broadcastBlock(block);
+    }
+  });
+
+  // Event handler for disconnecting a node
+  socket.on('disconnect', () => {
+    console.log('Node disconnected:', socket.id);
+
+    // Remove the node from the list of connected nodes
+    nodes = nodes.filter(node => node !== socket);
+  });
+}
+
+// Socket.io event handler for incoming connections
+io.on('connection', socket => {
+  console.log('Node connected:', socket.id);
+
+  // Add the node to the list of connected nodes
+  nodes.push(socket);
+
+  // Send the current blockchain to the new node
+  socket.emit('blockchain', blockchain);
+
+  // Event handler for receiving a new block from a node
+  socket.on('new block', block => {
+    console.log('Received block:', block);
+
+    // Validate the block and add it to the blockchain if it is valid
+    if (isValidBlock(block)) {
+      addBlock(block);
+      broadcastBlock(block);
+    }
+  });
+
+  // Event handler for receiving a new difficulty from a node
+  socket.on('new difficulty', difficulty => {
+    console.log('Received difficulty:', difficulty);
+
+    // Add the difficulty
+    globDifficulty = difficulty;
+  });
+
+ /* // Event handler for requesting to mine a new block
+  socket.on('mine', () => {
+    console.log('Received mine request');
+
+    // Calculate a new block with the pending transactions
+    mineBlock(globDifficulty);
+
+    // Clear the list of pending transactions
+    globDifficulty = globDifficulty+1;
+  });*/
+
+  // Event handler for disconnecting a node
+  socket.on('disconnect', () => {
+    console.log('Node disconnected:', socket.id);
+
+    // Remove the node from the list of connected nodes
+    nodes = nodes.filter(node => node !== socket);
+  });
+});
+
+// Connect to another node
+connectToNode('http://localhost:3000');
+
+// Start the server
+server.listen(3002, () => {
+  console.log('Server listening on port 3002');
+});
