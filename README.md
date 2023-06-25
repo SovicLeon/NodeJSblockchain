@@ -1,6 +1,6 @@
 # NodeJS POW blockchain
 
-Uses P2P connection
+Uses P2P connection, with sockets using socket.io and using Node.js Child Process
 
 ## How it works
 
